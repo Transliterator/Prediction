@@ -1,0 +1,269 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dynamic Sequence Generator</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+    }
+    .container {
+      display: flex;
+      gap: 30px;
+      align-items: flex-start;
+    }
+    .inputs {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 100px);
+      gap: 4px;
+    }
+    .grid input {
+      width: 90px;
+      padding: 4px;
+    }
+    .column-labels {
+      font-weight: bold;
+    }
+    canvas {
+      border: 1px solid #ccc;
+    }
+    textarea {
+      width: 310px;
+      height: 70px;
+    }
+    .control {
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Dynamic Sequence Generator & Evaluator</h2>
+
+  <div class="control">
+    <label for="rowCount">Enter number of rows: </label>
+    <input type="number" id="rowCount" value="20" min="1" max="100">
+    <button onclick="buildGrid()">Apply</button>
+  </div>
+
+  <div>
+    <textarea id="bulkInputA" placeholder="Paste values for column A"></textarea><br>
+    <button onclick="pasteToColumn('A')">Paste to A</button>
+  </div>
+
+  <div style="margin-top: 10px;">
+    <textarea id="bulkInputC" placeholder="Paste values for column C"></textarea><br>
+    <button onclick="pasteToColumn('C')">Paste to C</button>
+  </div>
+
+  <div class="container">
+    <div class="inputs">
+      <div class="grid column-labels">
+        <div>Column A<br>(Original)</div>
+        <div>Column B<br>(Generated)</div>
+        <div>Column C<br>(Actual)</div>
+      </div>
+      <div class="grid" id="grid"></div>
+      
+      <button onclick="clearAll()">Clear All</button>
+      <div id="stats"></div>
+    </div>
+    <div style="margin-bottom: 10px;">
+  <button onclick="generate()">Generate</button>
+</div>
+<canvas id="myChart" width="500" height="300"></canvas>
+  </div>
+
+  <script>
+    let N = parseInt(document.getElementById('rowCount').value);
+    const grid = document.getElementById('grid');
+    let chart;
+
+    function buildGrid() {
+      N = parseInt(document.getElementById('rowCount').value);
+      grid.innerHTML = '';
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < 3; j++) {
+          const input = document.createElement('input');
+          input.type = 'number';
+          input.setAttribute('data-row', i);
+          input.setAttribute('data-col', j);
+          grid.appendChild(input);
+        }
+      }
+      if (chart) chart.destroy();
+      document.getElementById('stats').innerHTML = '';
+    }
+
+    function boxMuller() {
+      let u = 0, v = 0;
+      while(u === 0) u = Math.random();
+      while(v === 0) v = Math.random();
+      return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    }
+
+    function generate() {
+  const A = [], B = [], C = [];
+
+  for (let i = 0; i < N; i++) {
+    const val = parseFloat(grid.querySelector(`input[data-row="${i}"][data-col="0"]`)?.value);
+    if (!isNaN(val)) A.push(val);
+  }
+
+  const n = A.length;
+  if (n === 0) return;
+
+  const mean = A.reduce((a, b) => a + b, 0) / n;
+  const variance = A.reduce((sum, x) => sum + Math.pow(x - mean, 2), 0) / n;
+  const stdDev = Math.sqrt(variance);
+  const safeStdDev = stdDev > 0.0000001 ? stdDev : 0.01;
+
+  // 🔹 Обчислюємо maxDiff (максимальний розрив між сусідніми в A)
+  let maxDiff = 0;
+  for (let i = 1; i < n; i++) {
+    const diff = Math.abs(A[i] - A[i - 1]);
+    if (diff > maxDiff) maxDiff = diff;
+  }
+
+  // 🔹 Генеруємо B з обмеженням на розрив
+  for (let i = 0; i < n; i++) {
+    let rand = mean + safeStdDev * boxMuller();
+
+    if (i > 0) {
+      const prev = B[i - 1];
+      const minAllowed = prev - maxDiff;
+      const maxAllowed = prev + maxDiff;
+      rand = Math.max(minAllowed, Math.min(maxAllowed, rand));
+    }
+
+    B.push(rand);
+    grid.querySelector(`input[data-row="${i}"][data-col="1"]`).value = rand.toFixed(2);
+  }
+
+  let hasActual = true;
+  for (let i = 0; i < n; i++) {
+    const val = parseFloat(grid.querySelector(`input[data-row="${i}"][data-col="2"]`)?.value);
+    if (!isNaN(val)) {
+      C.push(val);
+    } else {
+      hasActual = false;
+    }
+  }
+
+  let mae = 'N/A';
+  if (hasActual && C.length === B.length) {
+    const totalError = B.reduce((sum, val, i) => sum + Math.abs(val - C[i]), 0);
+    mae = (totalError / n).toFixed(4);
+  }
+
+  document.getElementById('stats').innerHTML = `
+    <strong>Mean:</strong> ${mean.toFixed(4)}<br>
+    <strong>Variance:</strong> ${variance.toFixed(4)}<br>
+    <strong>MAE (error):</strong> ${mae}
+  `;
+
+  drawChart(B, C);
+}
+
+    function drawChart(generated, actual) {
+  const original = [];
+
+  for (let i = 0; i < N; i++) {
+    const val = parseFloat(grid.querySelector(`input[data-row="${i}"][data-col="0"]`)?.value);
+    if (!isNaN(val)) {
+      original.push(val);
+    }
+  }
+
+  const labels = Array.from({ length: N }, (_, i) => i + 1);
+
+  if (chart) chart.destroy();
+
+  const datasets = [
+    {
+      label: 'Original',
+      data: original,
+      borderColor: 'gray',
+      borderWidth: 2,
+      fill: false,
+      tension: 0.3
+    },
+    {
+      label: 'Generated',
+      data: generated,
+      borderColor: 'blue',
+      borderWidth: 2,
+      fill: false,
+      tension: 0.3
+    }
+  ];
+
+  // Додаємо Actual лише якщо є повна послідовність
+  if (actual.length === N && actual.every(val => typeof val === 'number')) {
+    datasets.push({
+      label: 'Actual',
+      data: actual,
+      borderColor: 'green',
+      borderWidth: 2,
+      fill: false,
+      tension: 0.3
+    });
+  }
+
+  chart = new Chart(document.getElementById('myChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets
+    },
+    options: {
+      responsive: false,
+      scales: {
+        x: {
+          title: { display: true, text: 'Index' }
+        },
+        y: {
+          title: { display: true, text: 'Value' },
+          beginAtZero: false
+        }
+      }
+    }
+  });
+}
+
+    function pasteToColumn(col) {
+      const textArea = col === 'A' ? document.getElementById('bulkInputA') : document.getElementById('bulkInputC');
+      const colIndex = col === 'A' ? 0 : 2;
+
+      const text = textArea.value;
+      const values = text
+        .split(/[\s,]+/)
+        .map(val => parseFloat(val.replace(',', '.')))
+        .filter(val => !isNaN(val));
+
+      for (let i = 0; i < values.length && i < N; i++) {
+        grid.querySelector(`input[data-row="${i}"][data-col="${colIndex}"]`).value = values[i];
+      }
+    }
+
+    function clearAll() {
+      Array.from(grid.querySelectorAll('input')).forEach(input => input.value = '');
+      document.getElementById('stats').innerHTML = '';
+      if (chart) chart.destroy();
+    }
+
+    // Initial grid
+    buildGrid();
+  </script>
+</body>
+</html>
+
+
+
